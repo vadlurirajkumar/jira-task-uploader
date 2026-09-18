@@ -180,10 +180,24 @@ input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--primary); 
 .alert.error { background: var(--err-soft); color: var(--err); border-color: color-mix(in srgb, var(--err) 25%, transparent); }
 .alert.ok { background: var(--ok-soft); color: var(--ok); border-color: color-mix(in srgb, var(--ok) 25%, transparent); }
 .alert.warn { background: var(--warn-soft); color: var(--warn); border-color: color-mix(in srgb, var(--warn) 25%, transparent); }
-.toasts { position: fixed; right: 20px; bottom: 90px; z-index: 60; display: grid; gap: 8px; }
-.toast { min-width: 260px; max-width: 420px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-left: 4px solid var(--primary); border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); padding: 10px 14px; font-size: 13.5px; animation: slide-in .2s ease-out; }
-.toast.ok { border-left-color: var(--ok); }
-.toast.error { border-left-color: var(--err); }
+.alert-title { display: block; margin-bottom: 2px; }
+.alert-ref { display: block; margin-top: 6px; opacity: .8; font: 11.5px ui-monospace, Consolas, monospace; }
+.toasts { position: fixed; right: 20px; bottom: 90px; z-index: 60; display: flex; flex-direction: column; gap: 10px; width: min(380px, calc(100vw - 32px)); }
+.toast { display: flex; align-items: flex-start; gap: 10px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); padding: 12px 12px 12px 14px; font-size: 13.5px; animation: slide-in .22s cubic-bezier(.21, 1.02, .73, 1); transition: opacity .18s, transform .18s; }
+.toast.leaving { opacity: 0; transform: translateX(16px); }
+.toast.error { border-color: color-mix(in srgb, var(--err) 35%, var(--border)); }
+.toast-icon { flex: none; width: 18px; height: 18px; margin-top: 1px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; color: var(--primary); }
+.toast.ok .toast-icon { color: var(--ok); }
+.toast.error .toast-icon { color: var(--err); }
+.toast.warn .toast-icon { color: var(--warn); }
+.toast-body { flex: 1; min-width: 0; }
+.toast-title { font-weight: 600; line-height: 1.35; }
+.toast-desc { color: var(--text-2); margin-top: 3px; line-height: 1.45; word-break: break-word; }
+.toast-ref { margin-top: 6px; padding: 0; border: 0; background: none; color: var(--text-3); font: 11.5px ui-monospace, Consolas, monospace; cursor: pointer; }
+.toast-ref:hover { color: var(--text); text-decoration: underline; }
+.toast-close { flex: none; border: 0; background: none; color: var(--text-3); font-size: 18px; line-height: 1; padding: 0 2px; cursor: pointer; border-radius: 4px; }
+.toast-close:hover { color: var(--text); background: var(--surface-hover); }
+@media (max-width: 640px) { .toasts { right: 16px; bottom: 16px; } }
 @keyframes slide-in { from { transform: translateY(8px); opacity: 0; } }
 
 /* ============ Workspace layout ============ */

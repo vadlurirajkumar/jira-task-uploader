@@ -20,11 +20,32 @@ const state = {
 
 /* ---------------- utilities ---------------- */
 
+/** Error carrying an RFC 9457 problem response from the server. */
+class ApiError extends Error {
+  constructor(problem, status) {
+    super(problem.detail || problem.error || `Request failed (${status})`);
+    this.title = problem.title || "Request failed";
+    this.status = problem.status || status;
+    this.requestId = problem.request_id || "";
+  }
+}
+
 async function api(path, opts = {}) {
-  const res = await fetch(path, opts);
+  let res;
+  try { res = await fetch(path, opts); }
+  catch { throw new ApiError({ title: "You appear to be offline", detail: "Could not reach the server. Check your connection and try again." }, 0); }
   let body;
-  try { body = await res.json(); } catch { body = { ok: false, error: `Server error (${res.status})` }; }
-  if (!res.ok || !body.ok) throw new Error(body.error || `Request failed (${res.status})`);
+  try { body = await res.json(); }
+  catch {
+    const waking = res.status === 502 || res.status === 503;
+    throw new ApiError({
+      title: waking ? "Server is starting up" : "Server error",
+      detail: waking ? "The server is waking up after being idle. Wait a minute and try again."
+        : `The server returned an unexpected response (${res.status}).`,
+      request_id: res.headers.get("X-Request-ID") || "",
+    }, res.status);
+  }
+  if (!res.ok || !body.ok) throw new ApiError(body, res.status);
   return body;
 }
 
@@ -36,16 +57,58 @@ function store(key, value) {
   try { if (value === undefined) return localStorage.getItem(key); localStorage.setItem(key, value); } catch { return null; }
 }
 
-function toast(msg, kind = "") {
+/* Notifications: Sonner-style stacked toasts with title, description, reference ID and close. */
+const TOAST_ICONS = {
+  ok: '<path d="M20 6 9 17l-5-5"/>',
+  error: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/>',
+  warn: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4m0 4h.01"/>',
+  info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4m0-4h.01"/>',
+};
+const TOAST_MAX = 4;
+
+/** toast("Saved", "ok"), toast(error, "error") or toast({ title, description }, "warn"). */
+function toast(msg, kind = "info") {
+  kind = kind || "info";
+  const n = msg instanceof ApiError ? { title: msg.title, description: msg.message, requestId: msg.requestId }
+    : msg instanceof Error ? { title: "Something went wrong", description: msg.message }
+    : typeof msg === "object" ? msg : { title: msg };
   const el = document.createElement("div");
   el.className = `toast ${kind}`;
-  el.textContent = msg;
-  $("#toasts").appendChild(el);
-  setTimeout(() => el.remove(), kind === "error" ? 7000 : 4000);
+  el.setAttribute("role", kind === "error" ? "alert" : "status");
+  el.innerHTML = `
+    <svg class="toast-icon" viewBox="0 0 24 24" aria-hidden="true">${TOAST_ICONS[kind] || TOAST_ICONS.info}</svg>
+    <div class="toast-body">
+      <div class="toast-title">${esc(n.title)}</div>
+      ${n.description ? `<div class="toast-desc">${esc(n.description)}</div>` : ""}
+      ${n.requestId ? `<button type="button" class="toast-ref" title="Copy reference ID">Ref: ${esc(n.requestId)}</button>` : ""}
+    </div>
+    <button type="button" class="toast-close" aria-label="Dismiss">&times;</button>`;
+  const box = $("#toasts");
+  box.prepend(el);
+  while (box.children.length > TOAST_MAX) box.lastElementChild.remove();
+
+  // Auto-dismiss, paused while hovered so long errors can be read.
+  let remaining = kind === "error" ? 9000 : 4500, started, timer;
+  const close = () => { clearTimeout(timer); el.classList.add("leaving"); setTimeout(() => el.remove(), 180); };
+  const start = () => { started = Date.now(); timer = setTimeout(close, remaining); };
+  el.addEventListener("mouseenter", () => { clearTimeout(timer); remaining -= Date.now() - started; });
+  el.addEventListener("mouseleave", start);
+  el.querySelector(".toast-close").onclick = close;
+  const ref = el.querySelector(".toast-ref");
+  if (ref) ref.onclick = async () => {
+    try { await navigator.clipboard.writeText(n.requestId); ref.textContent = "Copied"; } catch { /* clipboard blocked */ }
+  };
+  start();
 }
 
+/** Inline alert; accepts a string or an ApiError (shown with its title and reference ID). */
 function showAlert(el, msg, kind = "error") {
-  el.textContent = msg;
+  if (msg instanceof ApiError) {
+    el.innerHTML = `<strong class="alert-title">${esc(msg.title)}</strong><div>${esc(msg.message)}</div>`
+      + (msg.requestId ? `<small class="alert-ref">Reference ID: ${esc(msg.requestId)}</small>` : "");
+  } else {
+    el.textContent = msg instanceof Error ? msg.message : msg;
+  }
   el.className = `alert ${kind}`;
 }
 
@@ -125,7 +188,7 @@ function renderProfiles() {
         const r = await api(`/api/profiles/${p.id}/use`, { method: "POST" });
         state.profile = r.profile;
         renderShell();
-      } catch (e) { showAlert($("#login-msg"), e.message); }
+      } catch (e) { showAlert($("#login-msg"), e); }
     };
     li.querySelector(".remove").onclick = async () => {
       const ok = await modal({ title: "Remove saved account?", body: `<p>The saved sign-in for <strong>${esc(p.username)}</strong> will be deleted from this computer. You can add it again later.</p>`, okText: "Remove" });
@@ -167,11 +230,16 @@ document.addEventListener("click", () => $("#user-dropdown").classList.add("hidd
 function syncAuthType() {
   const f = $("#login-form");
   const isCloud = /\.atlassian\.net/i.test(f.base_url.value);
-  f.auth_type.querySelector("option[value=bearer]").disabled = isCloud;
-  if (isCloud && f.auth_type.value === "bearer") f.auth_type.value = "basic";
-  $("#username-row").classList.toggle("hidden", f.auth_type.value === "bearer");
+  const pat = f.auth_type.value === "bearer";
+  // Jira Cloud has no bearer PATs: a personal token there is sent with the account email.
+  $("#username-row").classList.toggle("hidden", pat && !isCloud);
   $("label[for=f-user]").textContent = isCloud || !f.base_url.value ? "Email" : "Email / Username";
-  $("label[for=f-secret]").textContent = f.auth_type.value === "bearer" ? "Personal access token" : (isCloud || !f.base_url.value ? "API token" : "API token / Password");
+  $("label[for=f-secret]").textContent = pat ? "Personal access token" : (isCloud || !f.base_url.value ? "API token" : "API token / Password");
+  $("#auth-hint").textContent = !pat ? ""
+    : isCloud ? "Jira Cloud signs in personal tokens with your Atlassian email, so enter it above."
+    : "For Jira Server / Data Center. Create one in Jira under Profile > Personal Access Tokens.";
+  $("#auth-hint").classList.toggle("hidden", !pat);
+  $("#secret-help").classList.toggle("hidden", pat && !isCloud);
 }
 $("#login-form").auth_type.addEventListener("change", syncAuthType);
 $("#login-form").base_url.addEventListener("input", syncAuthType);
@@ -182,7 +250,7 @@ $("#login-form").addEventListener("submit", async (ev) => {
   const btn = $("#login-btn");
   $("#login-msg").classList.add("hidden");
   if (!f.base_url.value.trim() || !f.secret.value.trim()) {
-    showAlert($("#login-msg"), "Enter your Jira site and API token.");
+    showAlert($("#login-msg"), "Enter your Jira site and token.");
     return;
   }
   btn.disabled = true;
@@ -202,7 +270,7 @@ $("#login-form").addEventListener("submit", async (ev) => {
     renderShell();
     toast(`Signed in as ${r.profile.display_name}`, "ok");
   } catch (e) {
-    showAlert($("#login-msg"), e.message);
+    showAlert($("#login-msg"), e);
   } finally {
     btn.disabled = false;
     btn.textContent = "Sign in";
@@ -222,7 +290,7 @@ async function loadProjects() {
     await onProjectChange();
   } catch (e) {
     sel.innerHTML = "<option value=''>Could not load projects</option>";
-    toast(e.message, "error");
+    toast(e, "error");
   }
 }
 
@@ -255,7 +323,7 @@ async function loadIssueTypes() {
     renderTasks();
   } catch (e) {
     sel.innerHTML = "<option value=''>Could not load issue types</option>";
-    toast(e.message, "error");
+    toast(e, "error");
   }
 }
 
@@ -378,9 +446,9 @@ async function runParse(fd, name, meta) {
     setStep(r.tasks.length ? 2 : 1);
     renderTasks();
     if (r.tasks.length) toast(`Found ${r.tasks.length} tasks in ${name}`, "ok");
-    else toast(`No tasks found in ${name}. Use bullets such as "->", "-" or "1.".`, "error");
+    else toast({ title: `No tasks found in ${name}`, description: 'Start each task line with a bullet such as "->", "-" or "1."' }, "warn");
   } catch (e) {
-    toast(e.message, "error");
+    toast(e, "error");
   }
 }
 
@@ -574,10 +642,10 @@ $("#create-btn").onclick = async () => {
     renderResults(r, project, sprintName);
     setStep(3);
     const c = r.counts;
-    toast(`${c.created} created, ${c.skipped} skipped, ${c.failed} failed`, c.failed ? "error" : "ok");
+    toast({ title: c.failed ? "Some tickets failed" : "Tickets created", description: `${c.created} created, ${c.skipped} skipped, ${c.failed} failed` }, c.failed ? "error" : "ok");
   } catch (e) {
     closeModal();
-    toast(e.message, "error");
+    toast(e, "error");
   } finally {
     renderActionBar();
   }
@@ -609,7 +677,7 @@ $("#copy-keys").onclick = async () => {
   const keys = state.results.filter((x) => x.key).map((x) => x.key).join(", ");
   if (!keys) { toast("No tickets were created.", "error"); return; }
   try { await navigator.clipboard.writeText(keys); toast("Issue keys copied", "ok"); }
-  catch { toast(keys); }
+  catch { toast({ title: "Copy these issue keys", description: keys }); }
 };
 
 $("#export-csv").onclick = () => {
@@ -629,4 +697,4 @@ document.addEventListener("keydown", (e) => {
 
 /* ---------------- boot ---------------- */
 syncAuthType();
-loadSession().catch((e) => { $("#view-login").classList.remove("hidden"); showAlert($("#login-msg"), e.message); });
+loadSession().catch((e) => { $("#view-login").classList.remove("hidden"); showAlert($("#login-msg"), e); });

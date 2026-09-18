@@ -51,6 +51,7 @@ class Jira:
                  api_base: str | None = None):
         self.base_url = clean_url(base_url)          # used for links to issues
         self.api_base = api_base or self.base_url    # used for REST calls
+        self.auth_type = auth_type
         self.session = requests.Session()
         self.session.headers.update({"Accept": "application/json", "Content-Type": "application/json"})
         if auth_type == "bearer":
@@ -86,8 +87,14 @@ class Jira:
                     "in your browser, log back in and solve the CAPTCHA, then try again here.")
         detail = self._error_text(r)
         if r.status_code == 401:
-            return (f"Authentication failed (401) on {where}. Use your Atlassian email and an API "
-                    f"token, not your account password. {detail}")
+            if self.auth_type == "bearer":
+                hint = ("Check the personal access token is complete and not expired or revoked. "
+                        "Create a new one in Jira under Profile > Personal Access Tokens.")
+            elif (urlsplit(self.base_url).hostname or "").lower().endswith(".atlassian.net"):
+                hint = "Use your Atlassian email and an API token, not your account password."
+            else:
+                hint = "Check your username and password or token."
+            return f"Authentication failed (401) on {where}. {hint} {detail}"
         return (f"Forbidden (403) on {where}. Jira says: {detail}. If this happens at sign-in, check the "
                 f"token was copied fully and your account has Jira access on this site. If it happens "
                 f"later, your token or account is missing the permission or scope for this action.")

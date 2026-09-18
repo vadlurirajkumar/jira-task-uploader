@@ -80,8 +80,9 @@
           <label for="f-auth">Authentication</label>
           <select id="f-auth" name="auth_type">
             <option value="basic">Email + API token</option>
-            <option value="bearer">Personal access token (Server / Data Center)</option>
+            <option value="bearer">Personal access token (PAT)</option>
           </select>
+          <small class="help hidden" id="auth-hint"></small>
         </div>
         <div class="field" id="username-row">
           <label for="f-user">Email</label>
@@ -90,7 +91,7 @@
         <div class="field">
           <label for="f-secret">API token</label>
           <input id="f-secret" name="secret" type="password" required autocomplete="current-password">
-          <small class="help">Create one at
+          <small class="help" id="secret-help">Create one at
             <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener">id.atlassian.com &rsaquo; API tokens</a>.
           </small>
         </div>

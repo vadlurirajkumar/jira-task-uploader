@@ -8,6 +8,7 @@ Hosted mode keeps each visitor's accounts encrypted in their own browser cookie 
 so visitors never share an account.
 """
 import ipaddress
+import logging
 import os
 import secrets
 import socket
@@ -16,7 +17,8 @@ from datetime import timedelta
 from threading import Timer
 from urllib.parse import urlsplit
 
-from flask import Flask, jsonify, render_template, request, session
+from flask import Flask, g, jsonify, render_template, request, session
+from werkzeug.exceptions import HTTPException
 
 import browser_store
 import store as local_store
@@ -83,8 +85,65 @@ def public_https_url_error(url: str) -> str | None:
     return None
 
 
-def error(msg: str, code: int = 400):
-    return jsonify({"ok": False, "error": msg}), code
+log = logging.getLogger("jira_tool")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+# Short, human titles for RFC 9457 problem responses, keyed by HTTP status.
+PROBLEM_TITLES = {
+    400: "Check your input",
+    401: "Sign-in required",
+    403: "Access denied",
+    404: "Not found",
+    413: "File too large",
+    502: "Jira returned an error",
+    500: "Something went wrong",
+}
+
+
+@app.before_request
+def assign_request_id():
+    g.request_id = request.headers.get("X-Request-ID") or secrets.token_hex(6)
+
+
+@app.after_request
+def add_request_id(resp):
+    resp.headers["X-Request-ID"] = g.get("request_id", "")
+    return resp
+
+
+def error(msg: str, code: int = 400, title: str | None = None):
+    """Error response in RFC 9457 Problem Details format (application/problem+json).
+    `ok` and `error` are kept so older front-ends keep working."""
+    rid = g.get("request_id", "")
+    log.warning("request_id=%s status=%s path=%s detail=%s", rid, code, request.path, msg)
+    resp = jsonify({
+        "type": "about:blank",
+        "title": title or PROBLEM_TITLES.get(code, "Request failed"),
+        "status": code,
+        "detail": msg,
+        "instance": request.path,
+        "request_id": rid,
+        "ok": False,
+        "error": msg,
+    })
+    resp.status_code = code
+    resp.mimetype = "application/problem+json"
+    return resp
+
+
+@app.errorhandler(HTTPException)
+def handle_http_error(e: HTTPException):
+    if not request.path.startswith("/api/"):
+        return e
+    detail = "The file is larger than 20 MB." if e.code == 413 else e.description
+    return error(detail, e.code or 500)
+
+
+@app.errorhandler(Exception)
+def handle_unexpected(e: Exception):
+    log.exception("request_id=%s unhandled error on %s", g.get("request_id", ""), request.path)
+    return error("An unexpected error occurred on the server. Try again, and share the "
+                 "reference ID with your admin if it keeps happening.", 500)
 
 
 # ---------- pages ----------
@@ -120,21 +179,22 @@ def api_login():
     secret = (body.get("secret") or "").strip()
     remember = bool(body.get("remember", True))
     if base_url.lower().endswith(".atlassian.net") and auth_type == "bearer":
+        # Jira Cloud has no bearer PATs: its personal API tokens are sent with the account email.
         if not username:
-            return error("Jira Cloud (atlassian.net) does not accept personal access tokens. Choose "
-                         "'Email + API token', enter your Atlassian email and paste your API token.")
-        auth_type = "basic"  # Cloud API tokens always go with the account email
+            return error("On Jira Cloud (atlassian.net) a personal token must be paired with your "
+                         "Atlassian email. Enter your email and try again.", title="Email required")
+        auth_type = "basic"
     if not base_url or not secret or (auth_type == "basic" and not username):
-        return error("Jira URL, username/email and API token are required.")
+        return error("Jira site, email/username and token are required.", title="Missing details")
     if HOSTED:
         problem = public_https_url_error(base_url)
         if problem:
-            return error(problem)
+            return error(problem, title="Jira site not allowed")
     jira = Jira(base_url, auth_type, username, secret)
     try:
         me = jira.connect()
     except JiraError as e:
-        return error(str(e), 401)
+        return error(str(e), 401, title="Jira rejected the sign-in")
     display = me.get("displayName") or username
     email = me.get("emailAddress") or username
     if remember:
@@ -187,7 +247,7 @@ def api_delete_profile(pid):
 def api_projects():
     profile = current_profile()
     if not profile:
-        return error("Not signed in.", 401)
+        return error("Your session has ended. Sign in again.", 401)
     try:
         return jsonify({"ok": True, "projects": jira_for(profile).projects()})
     except JiraError as e:
@@ -198,7 +258,7 @@ def api_projects():
 def api_issuetypes():
     profile = current_profile()
     if not profile:
-        return error("Not signed in.", 401)
+        return error("Your session has ended. Sign in again.", 401)
     key = request.args.get("project", "")
     try:
         types = jira_for(profile).issue_types(key)
@@ -211,7 +271,7 @@ def api_issuetypes():
 def api_sprints():
     profile = current_profile()
     if not profile:
-        return error("Not signed in.", 401)
+        return error("Your session has ended. Sign in again.", 401)
     key = request.args.get("project", "")
     try:
         return jsonify({"ok": True, "sprints": jira_for(profile).sprints(key)})
@@ -250,7 +310,7 @@ def api_parse():
 def api_create():
     profile = current_profile()
     if not profile:
-        return error("Not signed in.", 401)
+        return error("Your session has ended. Sign in again.", 401)
     body = request.get_json(force=True) or {}
     project = body.get("project")
     issuetype = body.get("issuetype")
