@@ -1,0 +1,20 @@
+==========================================================
+Daily Tasks and work done details --- September 2026
+==========================================================
+Date:- 01/09/2026
+ -> [Bug] login button does nothing on Safari
+ -> Feature: export dashboard as PDF
+ -> update onboarding docs
+==========================================================
+Date:- 02/09/2026
+Bugs:
+ -> table header misaligned on small screens
+ -> date filter ignores time zone
+Features
+ -> dark mode for settings page
+==========================================================
+Date:- 03/09/2026
+ -> code review for payments module
+ -> fixed pagination bug in audit log
+ -> weekly report #task
+==========================================================

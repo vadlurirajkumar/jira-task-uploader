@@ -1,0 +1,16 @@
+# Render Blueprint: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: jira-task-uploader
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 180
+    healthCheckPath: /healthz
+    envVars:
+      - key: JIRA_TOOL_HOSTED
+        value: "1"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: PYTHON_VERSION
+        value: "3.12.7"

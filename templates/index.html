@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jira Task Uploader</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230c66e4'/><path d='M9 16.5l4.5 4.5L23 11.5' stroke='white' stroke-width='3.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+  <script>
+    try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+
+<!-- ================= Top navigation ================= -->
+<nav class="topbar">
+  <div class="brand">
+    <span class="brand-mark">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 12.5l4 4L18 8" /></svg>
+    </span>
+    <span class="brand-name">Jira Task Uploader</span>
+    <span class="brand-tag">Workspace</span>
+  </div>
+  <div class="topbar-right">
+    <span id="site-chip" class="chip hidden"></span>
+    <button class="icon-btn" id="theme-toggle" title="Toggle dark mode" aria-label="Toggle dark mode">
+      <svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+    </button>
+    <div id="user-menu" class="user-menu hidden">
+      <button class="user-btn" id="user-btn" aria-haspopup="true" aria-expanded="false">
+        <span class="avatar" id="avatar"></span>
+        <span class="user-name" id="user-name"></span>
+        <svg class="caret" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="dropdown hidden" id="user-dropdown" role="menu">
+        <div class="dropdown-head">
+          <strong id="dd-name"></strong>
+          <span id="dd-email" class="muted"></span>
+        </div>
+        <button class="dropdown-item" id="switch-account" role="menuitem">Switch account</button>
+        <button class="dropdown-item danger" id="logout" role="menuitem">Sign out</button>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<!-- ================= Sign-in view ================= -->
+<section id="view-login" class="login-view hidden">
+  <div class="login-hero">
+    <div class="hero-inner">
+      <h1>Turn your daily work log into Jira tickets</h1>
+      <p>Upload a text, Word or PDF document. Every task becomes a ticket with the right issue type, assigned to you, in your current sprint.</p>
+      <ul class="hero-points">
+        <li><span class="dot bug"></span>Bugs, features and tasks detected automatically</li>
+        <li><span class="dot feature"></span>Tickets land in the active sprint, assigned to you</li>
+        <li><span class="dot task"></span>Re-upload the same file safely, duplicates are skipped</li>
+      </ul>
+    </div>
+  </div>
+  <div class="login-panel">
+    <div class="login-card">
+      <h2>Connect to Jira</h2>
+      <p class="muted">Sign in once. Your account is remembered on this computer.</p>
+
+      <div id="saved-profiles" class="hidden">
+        <div class="section-label">Saved accounts</div>
+        <ul id="profile-list" class="profile-list"></ul>
+        <div class="divider"><span>or add another account</span></div>
+      </div>
+
+      <form id="login-form" autocomplete="on" novalidate>
+        <div class="field">
+          <label for="f-url">Jira site</label>
+          <input id="f-url" name="base_url" placeholder="https://yourcompany.atlassian.net" required>
+          <small class="help">The site address. Pasting any Jira page link also works.</small>
+        </div>
+        <div class="field">
+          <label for="f-auth">Authentication</label>
+          <select id="f-auth" name="auth_type">
+            <option value="basic">Email + API token</option>
+            <option value="bearer">Personal access token (Server / Data Center)</option>
+          </select>
+        </div>
+        <div class="field" id="username-row">
+          <label for="f-user">Email</label>
+          <input id="f-user" name="username" placeholder="you@company.com" autocomplete="username">
+        </div>
+        <div class="field">
+          <label for="f-secret">API token</label>
+          <input id="f-secret" name="secret" type="password" required autocomplete="current-password">
+          <small class="help">Create one at
+            <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener">id.atlassian.com &rsaquo; API tokens</a>.
+          </small>
+        </div>
+        <label class="check"><input type="checkbox" name="remember" checked><span>Remember me on this computer (stored encrypted)</span></label>
+        <div id="login-msg" class="alert hidden" role="alert"></div>
+        <button type="submit" class="btn btn-primary btn-block" id="login-btn">Sign in</button>
+      </form>
+    </div>
+  </div>
+</section>
+
+<!-- ================= Workspace view ================= -->
+<section id="view-app" class="app-view hidden">
+  <!-- Sidebar: destination & options -->
+  <aside class="sidebar">
+    <div class="panel">
+      <div class="panel-title">Destination</div>
+      <div class="field">
+        <label for="project">Project</label>
+        <select id="project"></select>
+      </div>
+      <div class="field">
+        <label for="sprint">Sprint</label>
+        <select id="sprint"><option value="">Backlog (no sprint)</option></select>
+        <small class="help" id="sprint-hint"></small>
+      </div>
+      <div class="field">
+        <label for="issuetype">Default issue type</label>
+        <select id="issuetype"></select>
+        <small class="help">Used for tasks with no bug, feature or task keyword.</small>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Type mapping</div>
+      <ul class="mapping" id="mapping"></ul>
+      <small class="help">Tag a line with <code>[Bug]</code>, <code>Feature:</code> or <code>#task</code>, or put it under a <code>Bugs:</code> heading.</small>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Options</div>
+      <label class="switch"><input type="checkbox" id="assign-me" checked><span class="track"></span><span>Assign to me</span></label>
+      <label class="switch"><input type="checkbox" id="skip-dupes" checked><span class="track"></span><span>Skip existing tickets</span></label>
+      <label class="switch"><input type="checkbox" id="set-due"><span class="track"></span><span>Task date as due date</span></label>
+      <label class="switch"><input type="checkbox" id="prefix-date"><span class="track"></span><span>Prefix summary with date</span></label>
+      <div class="field">
+        <label for="labels">Labels</label>
+        <input id="labels" value="daily-tasks" placeholder="comma,separated">
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main work area -->
+  <main class="main">
+    <header class="page-head">
+      <div>
+        <h1>Import tasks</h1>
+        <p class="muted">Upload your work log, review the detected tickets, then create them in Jira.</p>
+      </div>
+      <ol class="stepper" id="stepper">
+        <li class="active" data-step="1"><span>1</span>Upload</li>
+        <li data-step="2"><span>2</span>Review</li>
+        <li data-step="3"><span>3</span>Create</li>
+      </ol>
+    </header>
+
+    <!-- Upload -->
+    <div class="card">
+      <form id="upload-form">
+        <label class="dropzone" id="dropzone" for="file-input">
+          <input type="file" name="file" id="file-input" accept=".txt,.md,.text,.docx,.pdf,.log,.csv">
+          <svg class="dz-icon" viewBox="0 0 24 24"><path d="M12 16V4m0 0l-4 4m4-4l4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          <div class="dz-text"><strong>Drop your document here</strong> or <span class="link-text">browse</span></div>
+          <div class="dz-sub muted">Text, Markdown, Word (.docx) or PDF, up to 20 MB</div>
+        </label>
+        <div id="file-chip" class="file-chip hidden">
+          <svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z M14 3v5h5"/></svg>
+          <span id="file-name"></span>
+          <span id="file-meta" class="muted"></span>
+          <button type="button" class="link" id="file-clear">Change file</button>
+        </div>
+        <details class="paste">
+          <summary>Paste text instead</summary>
+          <textarea name="text" id="paste-text" rows="7" placeholder="Date:- 01/09/2026&#10;-> [Bug] login button broken&#10;-> Feature: dark mode&#10;-> update docs"></textarea>
+          <button type="submit" class="btn btn-secondary">Parse text</button>
+        </details>
+      </form>
+    </div>
+
+    <!-- KPIs -->
+    <div class="kpis hidden" id="kpis">
+      <div class="kpi"><span class="kpi-label">Tasks found</span><span class="kpi-value" id="k-total">0</span><span class="kpi-sub" id="k-range"></span></div>
+      <div class="kpi"><span class="kpi-label"><span class="dot bug"></span>Bugs</span><span class="kpi-value" id="k-bug">0</span></div>
+      <div class="kpi"><span class="kpi-label"><span class="dot feature"></span>Features</span><span class="kpi-value" id="k-feature">0</span></div>
+      <div class="kpi"><span class="kpi-label"><span class="dot task"></span>Tasks</span><span class="kpi-value" id="k-task">0</span><span class="kpi-sub" id="k-default"></span></div>
+    </div>
+
+    <!-- Review table -->
+    <div class="card card-flush hidden" id="review">
+      <div class="toolbar">
+        <div class="search">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+          <input id="search" placeholder="Search tasks">
+        </div>
+        <div class="segmented" id="kind-filter">
+          <button data-kind="all" class="on">All</button>
+          <button data-kind="bug"><span class="dot bug"></span>Bug</button>
+          <button data-kind="feature"><span class="dot feature"></span>Feature</button>
+          <button data-kind="task"><span class="dot task"></span>Task</button>
+        </div>
+        <div class="toolbar-right">
+          <select id="bulk-type" class="select-sm"><option value="">Set type for selected...</option></select>
+          <button class="btn btn-ghost btn-sm" id="add-row">+ Add task</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="grid-table" id="task-table">
+          <thead>
+            <tr>
+              <th class="col-check"><input type="checkbox" id="check-all" aria-label="Select all"></th>
+              <th class="col-date">Date</th>
+              <th>Summary</th>
+              <th class="col-type">Issue type</th>
+              <th class="col-src">Detected from</th>
+              <th class="col-act"></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div class="empty hidden" id="empty-filter">No tasks match the current filter.</div>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div class="card hidden" id="results">
+      <div class="results-head">
+        <div>
+          <h2>Import results</h2>
+          <p class="muted" id="results-sub"></p>
+        </div>
+        <div class="results-actions">
+          <button class="btn btn-ghost btn-sm" id="copy-keys">Copy issue keys</button>
+          <button class="btn btn-ghost btn-sm" id="export-csv">Export CSV</button>
+        </div>
+      </div>
+      <div class="kpis kpis-inline">
+        <div class="kpi ok"><span class="kpi-label">Created</span><span class="kpi-value" id="r-created">0</span></div>
+        <div class="kpi warn"><span class="kpi-label">Skipped</span><span class="kpi-value" id="r-skipped">0</span></div>
+        <div class="kpi err"><span class="kpi-label">Failed</span><span class="kpi-value" id="r-failed">0</span></div>
+      </div>
+      <div id="sprint-note" class="alert hidden"></div>
+      <div class="table-wrap">
+        <table class="grid-table" id="results-table">
+          <thead><tr><th class="col-status">Status</th><th class="col-key">Issue</th><th class="col-type">Type</th><th>Summary</th><th>Details</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="spacer"></div>
+  </main>
+
+  <!-- Sticky action bar -->
+  <div class="actionbar hidden" id="actionbar">
+    <div class="actionbar-info" id="actionbar-info"></div>
+    <button class="btn btn-primary" id="create-btn">Create tickets</button>
+  </div>
+</section>
+
+<!-- ================= Modal ================= -->
+<div class="modal-backdrop hidden" id="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <h2 id="modal-title"></h2>
+    <div id="modal-body"></div>
+    <div class="modal-actions" id="modal-actions">
+      <button class="btn btn-ghost" id="modal-cancel">Cancel</button>
+      <button class="btn btn-primary" id="modal-ok">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

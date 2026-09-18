@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+# Personal work logs stay local
+Daily*Tasks*.txt
+*.docx
+*.pdf
