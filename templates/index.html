@@ -47,7 +47,8 @@
 </nav>
 
 <!-- ================= Sign-in view ================= -->
-<section id="view-login" class="login-view hidden">
+<div id="view-login" class="hidden">
+<section class="login-view">
   <div class="login-hero">
     <div class="hero-inner">
       <h1>Turn your daily work log into Jira tickets</h1>
@@ -57,12 +58,14 @@
         <li><span class="dot feature"></span>Tickets land in the active sprint, assigned to you</li>
         <li><span class="dot task"></span>Re-upload the same file safely, duplicates are skipped</li>
       </ul>
+      <a href="#how" class="hero-more">See how it works
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg></a>
     </div>
   </div>
   <div class="login-panel">
     <div class="login-card">
       <h2>Connect to Jira</h2>
-      <p class="muted">Sign in once. Your account is remembered on this computer.</p>
+      <p class="muted">Sign in once. Your account is remembered {{ "in this browser" if hosted else "on this computer" }}.</p>
 
       <div id="saved-profiles" class="hidden">
         <div class="section-label">Saved accounts</div>
@@ -95,13 +98,252 @@
             <a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener">id.atlassian.com &rsaquo; API tokens</a>.
           </small>
         </div>
-        <label class="check"><input type="checkbox" name="remember" checked><span>Remember me on this computer (stored encrypted)</span></label>
+        <label class="check"><input type="checkbox" name="remember" checked><span>Remember me {{ "in this browser" if hosted else "on this computer" }} (stored encrypted)</span></label>
         <div id="login-msg" class="alert hidden" role="alert"></div>
         <button type="submit" class="btn btn-primary btn-block" id="login-btn">Sign in</button>
       </form>
+
+      <div class="trust-note">
+        <svg class="trust-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+        <div>
+          {% if hosted %}
+          <strong>Your token stays with you, not on our server</strong>
+          <p>We don't have a database and never save or log your token. It's kept encrypted in your own browser and used only to talk to Jira for you.</p>
+          <details>
+            <summary>How your token is handled</summary>
+            <ul>
+              <li>Saved encrypted in this browser's cookie, never on the server's disk or in a database.</li>
+              <li>Sent only over HTTPS, and only to your own Jira site.</li>
+              <li>Not visible to other users. Each person's accounts live in their own browser.</li>
+              <li>Delete it at any time with <em>Sign out</em>, or <em>Remove</em> on a saved account.</li>
+            </ul>
+          </details>
+          {% else %}
+          <strong>Your token never leaves this computer</strong>
+          <p>It's saved encrypted on this computer only and sent only to your own Jira site.</p>
+          {% endif %}
+        </div>
+      </div>
     </div>
   </div>
 </section>
+
+<!-- ================= Landing sections (signed-out only) ================= -->
+<div class="landing">
+
+  <!-- How it works -->
+  <section class="lp-section" id="how">
+    <div class="lp-wrap">
+      <div class="lp-head">
+        <span class="lp-kicker">How it works</span>
+        <h2>From notes to tickets in three steps</h2>
+        <p>Write your day the way you already do. The tool does the Jira clicking for you.</p>
+      </div>
+
+      <ol class="how-grid">
+        <li class="how-card">
+          <div class="how-visual">
+            <div class="mock-drop">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m-5 5 5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>
+              <span>Drop your work log</span>
+              <div class="mock-chips"><i>.txt</i><i>.docx</i><i>.pdf</i><i>.xlsx</i></div>
+            </div>
+          </div>
+          <span class="how-num">1</span>
+          <h3>Upload</h3>
+          <p>Drop a text, Word, PDF or Excel file, or paste your notes straight in.</p>
+        </li>
+        <li class="how-card">
+          <div class="how-visual">
+            <div class="mock-table">
+              <div class="mock-row"><b class="cb on"></b><span class="pill bug">Bug</span><em>login page crashes</em></div>
+              <div class="mock-row"><b class="cb on"></b><span class="pill feature">Feature</span><em>export as CSV</em></div>
+              <div class="mock-row"><b class="cb on"></b><span class="pill task">Task</span><em>update API docs</em></div>
+              <div class="mock-row dim"><b class="cb"></b><span class="pill task">Task</span><em>team lunch</em></div>
+            </div>
+          </div>
+          <span class="how-num">2</span>
+          <h3>Review</h3>
+          <p>Every task is listed with its type already picked. Untick, edit or retype anything.</p>
+        </li>
+        <li class="how-card">
+          <div class="how-visual">
+            <div class="mock-created">
+              <div><span class="key">WEB-101</span><span class="ok-tag">Created</span></div>
+              <div><span class="key">WEB-102</span><span class="ok-tag">Created</span></div>
+              <div><span class="key">WEB-103</span><span class="ok-tag">Created</span></div>
+              <small>In Sprint 24 &middot; assigned to you</small>
+            </div>
+          </div>
+          <span class="how-num">3</span>
+          <h3>Create</h3>
+          <p>One click creates them all, assigned to you, in your active sprint, with links back to Jira.</p>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- Live demo -->
+  <section class="lp-section lp-alt">
+    <div class="lp-wrap">
+      <div class="lp-head">
+        <span class="lp-kicker">See it in action</span>
+        <h2>Each line becomes the right kind of ticket</h2>
+        <p>Bugs, features and tasks are recognised from the words you already use.</p>
+      </div>
+
+      <div class="stage" aria-label="Example: three lines of a work log become a Bug, a Feature and a Task in Jira">
+        <div class="stage-doc">
+          <div class="stage-bar"><i></i><i></i><i></i><span>daily-log.docx</span></div>
+          <div class="stage-date">Date:- 01/09/2026</div>
+          <div class="stage-line l1">-&gt; login page crashes on Safari <mark>bug</mark></div>
+          <div class="stage-line l2">-&gt; export report as CSV <mark>feature</mark></div>
+          <div class="stage-line l3">-&gt; update API docs for v2</div>
+        </div>
+
+        <div class="stage-flow" aria-hidden="true">
+          <span class="stage-pulse"></span>
+          <svg viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
+        </div>
+
+        <div class="stage-board">
+          <div class="stage-col-head">Sprint 24 <span>3 new</span></div>
+          <div class="ticket t1">
+            <span class="ticket-type bug">Bug</span>
+            <div class="ticket-body"><strong>WEB-101</strong><span>login page crashes on Safari</span></div>
+            <span class="ticket-avatar">You</span>
+          </div>
+          <div class="ticket t2">
+            <span class="ticket-type feature">Feature</span>
+            <div class="ticket-body"><strong>WEB-102</strong><span>export report as CSV</span></div>
+            <span class="ticket-avatar">You</span>
+          </div>
+          <div class="ticket t3">
+            <span class="ticket-type task">Task</span>
+            <div class="ticket-body"><strong>WEB-103</strong><span>update API docs for v2</span></div>
+            <span class="ticket-avatar">You</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Type detection -->
+  <section class="lp-section">
+    <div class="lp-wrap lp-split">
+      <div class="lp-head left">
+        <span class="lp-kicker">Smart detection</span>
+        <h2>It knows a bug from a feature</h2>
+        <p>Each task is checked in this order, and the first match wins. You can still change any type before creating.</p>
+      </div>
+      <ol class="ladder">
+        <li>
+          <span class="ladder-step">1</span>
+          <div class="ladder-rule"><strong>Tag on the line</strong><code>[Bug] login broken</code></div>
+          <svg class="ladder-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
+          <span class="pill bug">Bug</span>
+        </li>
+        <li>
+          <span class="ladder-step">2</span>
+          <div class="ladder-rule"><strong>Heading above it</strong><code>Features:</code></div>
+          <svg class="ladder-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
+          <span class="pill feature">Feature</span>
+        </li>
+        <li>
+          <span class="ladder-step">3</span>
+          <div class="ladder-rule"><strong>Keyword in the text</strong><code>hotfix for payments</code></div>
+          <svg class="ladder-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
+          <span class="pill bug">Bug</span>
+        </li>
+        <li>
+          <span class="ladder-step">4</span>
+          <div class="ladder-rule"><strong>Nothing matched</strong><code>update docs</code></div>
+          <svg class="ladder-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
+          <span class="pill task">Your default</span>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- Before / after -->
+  <section class="lp-section lp-alt">
+    <div class="lp-wrap">
+      <div class="lp-head">
+        <span class="lp-kicker">Why use it</span>
+        <h2>Stop filling the same form over and over</h2>
+      </div>
+      <div class="compare">
+        <div class="compare-card before">
+          <h3>Creating tickets by hand</h3>
+          <ol>
+            <li>Open <em>Create issue</em></li>
+            <li>Pick the project and issue type</li>
+            <li>Copy the summary from your notes</li>
+            <li>Assign it to yourself</li>
+            <li>Move it into the sprint</li>
+          </ol>
+          <div class="repeat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>Repeat for every task, every day</div>
+        </div>
+        <div class="compare-card after">
+          <h3>With Task Uploader</h3>
+          <ol>
+            <li>Upload today's notes</li>
+            <li>Click <em>Create tickets</em></li>
+          </ol>
+          <div class="done"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>All tasks created, typed, assigned and in the sprint</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section class="lp-section">
+    <div class="lp-wrap">
+      <div class="lp-head">
+        <span class="lp-kicker">Built in</span>
+        <h2>The details are handled</h2>
+      </div>
+      <div class="feature-grid">
+        <div class="feat"><span class="f-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></span><h3>Assigned to you</h3><p>Every ticket is assigned to the signed-in account.</p></div>
+        <div class="feat"><span class="f-icon"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></span><h3>Active sprint</h3><p>Tickets go straight into the sprint you choose, or the backlog.</p></div>
+        <div class="feat"><span class="f-icon"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></span><h3>No duplicates</h3><p>Upload the same file twice and existing tickets are skipped.</p></div>
+        <div class="feat"><span class="f-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4m8-4v4"/></svg></span><h3>Dates understood</h3><p><code>01/09/2026</code>, <code>1 Sep 2026</code> and more, applied to the tasks below them.</p></div>
+        <div class="feat"><span class="f-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span><h3>Due dates &amp; labels</h3><p>Use the log date as the due date, and add labels to every ticket.</p></div>
+        <div class="feat"><span class="f-icon"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span><h3>Cloud &amp; Data Center</h3><p>API tokens, scoped tokens and personal access tokens all work.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Security -->
+  <section class="lp-section lp-alt">
+    <div class="lp-wrap">
+      <div class="security">
+        <span class="security-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg></span>
+        <div>
+          {% if hosted %}
+          <h2>Your token stays with you</h2>
+          <p>There is no database. Your Jira token is kept encrypted in your own browser, sent only over HTTPS to your Jira site, and never saved or logged on the server.</p>
+          {% else %}
+          <h2>Your token never leaves this computer</h2>
+          <p>It's saved encrypted on this computer only and sent only to your own Jira site.</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Call to action -->
+  <section class="lp-cta">
+    <div class="lp-wrap">
+      <h2>Turn today's notes into tickets</h2>
+      <p>Connect your Jira account once and you're ready.</p>
+      <a href="#view-login" class="btn btn-primary btn-lg" id="cta-connect">Connect to Jira</a>
+    </div>
+  </section>
+
+  <footer class="lp-footer">Jira Task Uploader &middot; Not affiliated with Atlassian</footer>
+</div>
+</div>
 
 <!-- ================= Workspace view ================= -->
 <section id="view-app" class="app-view hidden">
@@ -122,6 +364,42 @@
         <label for="issuetype">Default issue type</label>
         <select id="issuetype"></select>
         <small class="help">Used for tasks with no bug, feature or task keyword.</small>
+      </div>
+    </div>
+
+    <div class="panel hidden" id="structure-panel">
+      <div class="panel-title">Parent tickets</div>
+      <div class="field">
+        <label for="structure">Create each category as</label>
+        <select id="structure">
+          <option value="subtask">Parent ticket with sub-tasks</option>
+          <option value="epic">Epic with child issues</option>
+          <option value="flat">No parent (category as a label)</option>
+        </select>
+        <small class="help" id="structure-help"></small>
+      </div>
+      <div class="field" id="parent-type-row">
+        <label for="parent-type">Parent issue type</label>
+        <select id="parent-type"></select>
+      </div>
+      <div class="field" id="child-type-row">
+        <label for="child-type">Sub-task type</label>
+        <select id="child-type"></select>
+      </div>
+      <div class="field" id="suffix-row">
+        <label for="parent-suffix">Parent name suffix</label>
+        <input id="parent-suffix" placeholder="e.g. September 2026">
+        <small class="help">Added to every parent name. Leave it empty to reuse the same parents every month.</small>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Status</div>
+      <label class="switch"><input type="checkbox" id="apply-status" checked><span class="track"></span><span>Move tickets to their status</span></label>
+      <div class="field">
+        <label for="default-status">Default status</label>
+        <select id="default-status"><option value="">Load a project first</option></select>
+        <small class="help">For tasks with no status in the document. Phrases like "in progress", "pending" or "completed" are picked up from the text.</small>
       </div>
     </div>
 
@@ -162,10 +440,10 @@
     <div class="card">
       <form id="upload-form">
         <label class="dropzone" id="dropzone" for="file-input">
-          <input type="file" name="file" id="file-input" accept=".txt,.md,.text,.docx,.pdf,.log,.csv">
+          <input type="file" name="file" id="file-input" accept=".txt,.md,.text,.docx,.pdf,.log,.csv,.xlsx,.xlsm">
           <svg class="dz-icon" viewBox="0 0 24 24"><path d="M12 16V4m0 0l-4 4m4-4l4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
           <div class="dz-text"><strong>Drop your document here</strong> or <span class="link-text">browse</span></div>
-          <div class="dz-sub muted">Text, Markdown, Word (.docx) or PDF, up to 20 MB</div>
+          <div class="dz-sub muted">Daily log or category report: text, Markdown, Word, PDF or Excel, up to 20 MB</div>
         </label>
         <div id="file-chip" class="file-chip hidden">
           <svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z M14 3v5h5"/></svg>
@@ -184,10 +462,12 @@
     <!-- KPIs -->
     <div class="kpis hidden" id="kpis">
       <div class="kpi"><span class="kpi-label">Tasks found</span><span class="kpi-value" id="k-total">0</span><span class="kpi-sub" id="k-range"></span></div>
-      <div class="kpi"><span class="kpi-label"><span class="dot bug"></span>Bugs</span><span class="kpi-value" id="k-bug">0</span></div>
-      <div class="kpi"><span class="kpi-label"><span class="dot feature"></span>Features</span><span class="kpi-value" id="k-feature">0</span></div>
-      <div class="kpi"><span class="kpi-label"><span class="dot task"></span>Tasks</span><span class="kpi-value" id="k-task">0</span><span class="kpi-sub" id="k-default"></span></div>
+      <div class="kpi"><span class="kpi-label" id="k-groups-label">Categories</span><span class="kpi-value" id="k-groups">0</span><span class="kpi-sub" id="k-groups-sub"></span></div>
+      <div class="kpi"><span class="kpi-label">Status</span><span class="kpi-value" id="k-done">0</span><div class="status-bar" id="k-status-bar"></div><span class="kpi-sub" id="k-status-sub"></span></div>
+      <div class="kpi"><span class="kpi-label">Already in Jira</span><span class="kpi-value" id="k-jira">–</span><span class="kpi-sub" id="k-jira-sub"></span></div>
     </div>
+
+    <div id="verify" class="alert hidden" role="status"></div>
 
     <!-- Review table -->
     <div class="card card-flush hidden" id="review">
@@ -202,7 +482,12 @@
           <button data-kind="feature"><span class="dot feature"></span>Feature</button>
           <button data-kind="task"><span class="dot task"></span>Task</button>
         </div>
+        <div class="segmented hidden" id="group-by" aria-label="Group rows by">
+          <button data-group="category" class="on">By category</button>
+          <button data-group="date">By date</button>
+        </div>
         <div class="toolbar-right">
+          <select id="bulk-status" class="select-sm"><option value="">Set status for selected...</option></select>
           <select id="bulk-type" class="select-sm"><option value="">Set type for selected...</option></select>
           <button class="btn btn-ghost btn-sm" id="add-row">+ Add task</button>
         </div>
@@ -215,7 +500,8 @@
               <th class="col-date">Date</th>
               <th>Summary</th>
               <th class="col-type">Issue type</th>
-              <th class="col-src">Detected from</th>
+              <th class="col-state">Status</th>
+              <th class="col-jira">In Jira <span class="spinner spinner-sm hidden" id="match-spin"></span></th>
               <th class="col-act"></th>
             </tr>
           </thead>
@@ -233,19 +519,22 @@
           <p class="muted" id="results-sub"></p>
         </div>
         <div class="results-actions">
+          <a class="btn btn-ghost btn-sm" id="open-jira" target="_blank" rel="noopener">Open all in Jira</a>
           <button class="btn btn-ghost btn-sm" id="copy-keys">Copy issue keys</button>
           <button class="btn btn-ghost btn-sm" id="export-csv">Export CSV</button>
         </div>
       </div>
-      <div class="kpis kpis-inline">
+      <div class="tally hidden" id="tally"></div>
+      <div class="kpis">
         <div class="kpi ok"><span class="kpi-label">Created</span><span class="kpi-value" id="r-created">0</span></div>
-        <div class="kpi warn"><span class="kpi-label">Skipped</span><span class="kpi-value" id="r-skipped">0</span></div>
+        <div class="kpi info"><span class="kpi-label">Status updated</span><span class="kpi-value" id="r-updated">0</span></div>
+        <div class="kpi warn"><span class="kpi-label">Already in Jira</span><span class="kpi-value" id="r-skipped">0</span></div>
         <div class="kpi err"><span class="kpi-label">Failed</span><span class="kpi-value" id="r-failed">0</span></div>
       </div>
       <div id="sprint-note" class="alert hidden"></div>
       <div class="table-wrap">
         <table class="grid-table" id="results-table">
-          <thead><tr><th class="col-status">Status</th><th class="col-key">Issue</th><th class="col-type">Type</th><th>Summary</th><th>Details</th></tr></thead>
+          <thead><tr><th class="col-status">Result</th><th class="col-key">Issue</th><th class="col-type">Type</th><th>Summary</th><th class="col-state">Jira status</th><th>Details</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>

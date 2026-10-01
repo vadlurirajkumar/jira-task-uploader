@@ -10,6 +10,7 @@ so visitors never share an account.
 import ipaddress
 import logging
 import os
+import re
 import secrets
 import socket
 import webbrowser
@@ -22,8 +23,8 @@ from werkzeug.exceptions import HTTPException
 
 import browser_store
 import store as local_store
-from doc_parser import extract_text, parse_tasks
-from jira_client import Jira, JiraError, clean_url, map_kinds, normalize
+from doc_parser import parse_document, parse_text
+from jira_client import Jira, JiraError, clean_url, fit_summary, map_kinds, normalize
 
 HOSTED = os.environ.get("JIRA_TOOL_HOSTED", "").lower() in ("1", "true", "yes") or bool(os.environ.get("RENDER"))
 
@@ -45,7 +46,7 @@ if HOSTED:
 app.permanent_session_lifetime = timedelta(days=365)
 app.config["MAX_CONTENT_LENGTH"] = 20 * 1024 * 1024  # 20 MB uploads
 
-ALLOWED_EXT = (".txt", ".md", ".text", ".docx", ".pdf", ".log", ".csv")
+ALLOWED_EXT = (".txt", ".md", ".text", ".docx", ".pdf", ".log", ".csv", ".xlsx", ".xlsm")
 
 
 # ---------- helpers ----------
@@ -155,7 +156,7 @@ def healthz():
 
 @app.get("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", hosted=HOSTED)
 
 
 # ---------- session / auth ----------
@@ -280,6 +281,35 @@ def api_sprints():
         return jsonify({"ok": True, "sprints": [], "warning": str(e)})
 
 
+@app.get("/api/statuses")
+def api_statuses():
+    profile = current_profile()
+    if not profile:
+        return error("Your session has ended. Sign in again.", 401)
+    try:
+        return jsonify({"ok": True, **jira_for(profile).statuses(request.args.get("project", ""))})
+    except JiraError as e:
+        return error(str(e), 502)
+
+
+@app.post("/api/match")
+def api_match():
+    """Which summaries already exist in Jira (reported by you), with their key and status."""
+    profile = current_profile()
+    if not profile:
+        return error("Your session has ended. Sign in again.", 401)
+    body = request.get_json(force=True) or {}
+    project = body.get("project")
+    if not project:
+        return error("Choose a project.")
+    try:
+        existing = jira_for(profile).existing_issues(project)
+    except JiraError as e:
+        return error(f"Could not check Jira for existing tickets: {e}", 502)
+    matches = [existing.get(normalize(fit_summary(s))) for s in body.get("summaries") or []]
+    return jsonify({"ok": True, "matches": matches})
+
+
 # ---------- document parsing ----------
 
 @app.post("/api/parse")
@@ -290,7 +320,7 @@ def api_parse():
         if not name.lower().endswith(ALLOWED_EXT):
             return error("Unsupported file type. Upload .txt, .md, .docx or .pdf.")
         try:
-            text = extract_text(name, f.read())
+            parsed = parse_document(name, f.read())
         except ValueError as e:
             return error(str(e))
         except Exception as e:  # corrupt file etc.
@@ -300,26 +330,115 @@ def api_parse():
         name = "pasted text"
         if not text:
             return error("Upload a file or paste some text.")
-    tasks = parse_tasks(text)
-    return jsonify({"ok": True, "filename": name, "tasks": tasks, "raw_lines": len(text.splitlines())})
+        parsed = parse_text(text)
+    return jsonify({"ok": True, "filename": name, **parsed})
 
 
 # ---------- ticket creation ----------
 
+class StatusMover:
+    """Moves issues to the status chosen in the app, mapping it onto each issue type's workflow."""
+
+    def __init__(self, jira: Jira, project: str):
+        info = jira.statuses(project)
+        self.jira = jira
+        self.by_id = {s["id"]: s for s in info["statuses"]}
+        self.rank = {s["id"]: i for i, s in enumerate(info["statuses"])}
+        self.by_type = info["by_type"]
+
+    def move(self, r: dict, target_id: str, type_id: str, current_id: str | None) -> None:
+        target = self.by_id.get(str(target_id))
+        if not target:
+            r["notes"].append("status not changed: unknown status")
+            return
+        allowed = self.by_type.get(str(type_id))
+        if allowed and target["id"] not in allowed:
+            # e.g. sub-tasks often have a simpler workflow without "QA" or "Prod".
+            alt = next((self.by_id[i] for i in allowed
+                        if i in self.by_id and self.by_id[i]["category"] == target["category"]), None)
+            if not alt:
+                r["notes"].append(f"status not changed: this issue type has no '{target['name']}' status")
+                return
+            r["notes"].append(f"this issue type has no '{target['name']}', used '{alt['name']}'")
+            target = alt
+        try:
+            current_id = current_id or self.jira.initial_status(r["key"], str(type_id))
+            if current_id == target["id"]:
+                r["jira_status"] = r.get("jira_status") or target["name"]
+                return
+            before = self.by_id.get(current_id, {}).get("name")
+            r["jira_status"] = self.jira.move_to_status(r["key"], current_id, target["id"], self.rank,
+                                                        str(type_id)) or target["name"]
+            if r["status"] == "skipped":
+                r["status"] = "updated"
+                r["reason"] = f"Status {before or 'changed'} → {r['jira_status']}"
+        except JiraError as e:
+            r["notes"].append(f"status not set to '{target['name']}': {e}")
+
+
+def slug(text: str) -> str:
+    """Category as a Jira label (labels cannot contain spaces): 'Design & Content' -> 'design-content'."""
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def task_fields(project: str, summary: str, type_id: str, description: str, date: str | None,
+                opts: dict, assignee: dict | None, extra_labels: list[str] = ()) -> dict:
+    fields = {
+        "project": {"key": project},
+        "issuetype": {"id": str(type_id)},
+        "summary": fit_summary(summary),
+        "description": description,
+    }
+    labels = [l.strip() for l in (opts.get("labels") or "").split(",") if l.strip()] + list(extra_labels)
+    if labels:
+        fields["labels"] = list(dict.fromkeys(l.replace(" ", "-") for l in labels))
+    if opts.get("set_due_date") and date:
+        fields["duedate"] = date
+    if assignee:
+        fields["assignee"] = assignee
+    return fields
+
+
+def finish_created(jira: Jira, created: dict, assignee: dict | None) -> list[str]:
+    """Notes for a created issue; assigns it in a second step when the create screen has no assignee."""
+    notes = []
+    dropped = created.get("dropped_fields", [])
+    if "assignee" in dropped:
+        dropped.remove("assignee")
+        try:
+            jira.assign(created["key"], assignee)
+        except JiraError as e:
+            notes.append(f"not assigned: {e}")
+    if dropped:
+        notes.append("created without: " + ", ".join(dropped))
+    return notes
+
+
 @app.post("/api/create")
 def api_create():
+    """Create one batch of tickets: optionally one parent (a parent ticket for sub-tasks, or an
+    epic) and its tasks. The browser sends one batch per category so progress can be shown
+    and no request runs too long.
+
+    Tasks that already exist carry `existing_key`; they are not created again, but are moved
+    to their chosen status. Every result carries `role` ("parent"/"child") so the browser can
+    count parents and child tasks separately."""
     profile = current_profile()
     if not profile:
         return error("Your session has ended. Sign in again.", 401)
     body = request.get_json(force=True) or {}
     project = body.get("project")
-    issuetype = body.get("issuetype")
+    mode = body.get("mode") or "flat"  # "subtask" | "epic" | "flat"
+    parent = body.get("parent")
     tasks = body.get("tasks") or []
     opts = body.get("options") or {}
-    if not project or not (issuetype or all(t.get("issuetype") for t in tasks)):
-        return error("Choose a project and a default issue type.")
+    if not project:
+        return error("Choose a project.")
     if not tasks:
         return error("No tasks selected.")
+    if any(not t.get("issuetype") and not t.get("existing_key") for t in tasks) \
+            or (parent and not parent.get("issuetype") and not parent.get("existing_key")):
+        return error("Choose an issue type for every task.")
 
     jira = jira_for(profile)
     assignee = None
@@ -328,86 +447,115 @@ def api_create():
             assignee = Jira.user_ref(jira.myself())
         except JiraError as e:
             return error(f"Could not look up your Jira account for assigning: {e}", 502)
-    sprint_id = opts.get("sprint_id")
-    existing: set[str] = set()
-    if opts.get("skip_duplicates", True):
+    mover = None
+    if opts.get("apply_status", True) and (any(t.get("status_id") for t in tasks) or (parent or {}).get("status_id")):
         try:
-            existing = jira.existing_summaries(project)
+            mover = StatusMover(jira, project)
         except JiraError as e:
-            return error(f"Could not check for duplicates: {e}", 502)
+            return error(f"Could not read the project's statuses: {e}", 502)
 
-    results = []
-    seen_in_batch: set[str] = set()
+    results: list[dict] = []
+    moves: list[tuple] = []  # (result, target status, issue type, current status)
+
+    # ----- parent -----
+    parent_key = None
+    if parent:
+        summary = fit_summary(parent.get("summary"))
+        r = {"summary": summary, "role": "parent", "category": parent.get("category"),
+             "issuetype": parent.get("issuetype_name"), "notes": []}
+        if parent.get("existing_key"):
+            r.update(status="skipped", key=parent["existing_key"], url=jira.issue_url(parent["existing_key"]),
+                     reason="Already in Jira", jira_status=parent.get("current_status"))
+            type_id = parent.get("existing_type") or parent.get("issuetype")
+            moves.append((r, parent.get("status_id"), type_id, parent.get("current_status_id")))
+        else:
+            dates = sorted(t["date"] for t in tasks if t.get("date"))
+            lines = [f"Tasks under {parent.get('category') or summary}:"]
+            lines += ["- " + " ".join(filter(None, [t.get("date"), fit_summary(t.get("summary"))])) for t in tasks]
+            lines.append("Created from document via Jira Task Uploader.")
+            fields = task_fields(project, summary, parent["issuetype"], "\n".join(lines),
+                                 dates[-1] if dates else None, opts, assignee)
+            optional = ()
+            if mode == "epic":
+                name_field = jira.epic_fields().get("epic_name")  # required on Jira Server / Data Center
+                if name_field:
+                    fields[name_field] = summary
+                    optional = (name_field,)
+            try:
+                created = jira.create_issue(fields, optional)
+                r.update(status="created", key=created["key"], url=jira.issue_url(created["key"]),
+                         notes=finish_created(jira, created, assignee))
+                moves.append((r, parent.get("status_id"), parent["issuetype"], None))
+            except JiraError as e:
+                r.update(status="failed", reason=str(e))
+        results.append(r)
+        parent_key = r.get("key")
+        if not parent_key:
+            for t in tasks:
+                results.append({"summary": fit_summary(t.get("summary")), "role": "child", "status": "failed",
+                                "category": parent.get("category"), "issuetype": t.get("issuetype_name"),
+                                "reason": "Not created because its parent ticket failed", "notes": []})
+            return jsonify({"ok": True, "results": results, "sprint_added": 0, "sprint_error": None})
+
+    # ----- tasks -----
+    seen: set[str] = set()
     for t in tasks:
-        summary = " ".join((t.get("summary") or "").split())
+        summary = fit_summary(t.get("summary"))
         if not summary:
             continue
-        date = t.get("date")
-        if opts.get("prefix_date") and date:
-            summary = f"{date} - {summary}"
+        r = {"summary": summary, "role": "child", "category": t.get("category"),
+             "issuetype": t.get("issuetype_name"), "notes": [], "parent": parent_key}
+        results.append(r)
+        if t.get("existing_key"):
+            r.update(status="skipped", key=t["existing_key"], url=jira.issue_url(t["existing_key"]),
+                     reason="Already in Jira", jira_status=t.get("current_status"))
+            moves.append((r, t.get("status_id"), t.get("existing_type") or t.get("issuetype"),
+                          t.get("current_status_id")))
+            continue
         key_norm = normalize(summary)
-        if key_norm in existing or key_norm in seen_in_batch:
-            results.append({"summary": summary, "status": "skipped", "reason": "Already exists in Jira"})
+        if key_norm in seen:
+            r.update(status="skipped", reason="Listed twice in this upload")
             continue
-        seen_in_batch.add(key_norm)
-
-        full_summary = summary
-        if len(summary) > 255:
-            summary = summary[:252] + "..."
-        desc_lines = [full_summary]
+        seen.add(key_norm)
+        date = t.get("date")
+        desc = [" ".join(t["summary"].split())]
         if date:
-            desc_lines.append(f"Work date: {date}")
-        desc_lines.append(f"Created from document via Jira Task Uploader.")
-        fields = {
-            "project": {"key": project},
-            "issuetype": {"id": str(t.get("issuetype") or issuetype)},
-            "summary": summary,
-            "description": "\n".join(desc_lines),
-        }
-        labels = [l.strip() for l in (opts.get("labels") or "").split(",") if l.strip()]
-        if labels:
-            fields["labels"] = [l.replace(" ", "-") for l in labels]
-        if opts.get("set_due_date") and date:
-            fields["duedate"] = date
-        if assignee:
-            fields["assignee"] = assignee
+            desc.append(f"Work date: {date}")
+        if t.get("category"):
+            desc.append(f"Category: {t['category']}")
+        desc.append("Created from document via Jira Task Uploader.")
+        extra = [slug(t["category"])] if t.get("category") and not parent_key else []
+        fields = task_fields(project, summary, t["issuetype"], "\n".join(desc), date, opts, assignee, extra)
         try:
-            created = jira.create_issue(fields)
+            created = jira.create_child(fields, parent_key) if parent_key else jira.create_issue(fields)
         except JiraError as e:
-            results.append({"summary": summary, "status": "failed", "reason": str(e)})
+            r.update(status="failed", reason=str(e))
             continue
-        existing.add(key_norm)
-        notes = []
-        dropped = created.get("dropped_fields", [])
-        if "assignee" in dropped:
-            # Assignee is not on the create screen: assign in a second step.
-            dropped.remove("assignee")
-            try:
-                jira.assign(created["key"], assignee)
-            except JiraError as e:
-                notes.append(f"not assigned: {e}")
-        if dropped:
-            notes.append("created without: " + ", ".join(dropped))
-        results.append({
-            "summary": summary, "status": "created", "key": created["key"],
-            "issuetype": t.get("issuetype_name"),
-            "url": jira.issue_url(created["key"]), "notes": notes,
-        })
+        r.update(status="created", key=created["key"], url=jira.issue_url(created["key"]),
+                 notes=finish_created(jira, created, assignee))
+        moves.append((r, t.get("status_id"), t["issuetype"], None))
 
-    sprint_note = None
-    new_keys = [r["key"] for r in results if r["status"] == "created"]
-    if sprint_id and new_keys:
+    # ----- statuses: tasks first, then the parent (some workflows block closing an open parent) -----
+    if mover:
+        for r, target, type_id, current in sorted(moves, key=lambda m: m[0]["role"] == "parent"):
+            if target and r.get("key"):
+                mover.move(r, target, type_id, current)
+
+    # ----- sprint: sub-tasks follow their parent and epics cannot join sprints -----
+    sprint_added, sprint_error = 0, None
+    sprint_id = opts.get("sprint_id")
+    sprint_role = "parent" if mode == "subtask" and parent_key else "child"
+    in_sprint = [r for r in results if r["status"] == "created" and r["role"] == sprint_role]
+    if sprint_id and in_sprint:
         try:
-            jira.add_to_sprint(int(sprint_id), new_keys)
-            sprint_note = f"Added {len(new_keys)} ticket(s) to the sprint."
+            jira.add_to_sprint(int(sprint_id), [r["key"] for r in in_sprint])
+            sprint_added = len(in_sprint)
         except JiraError as e:
-            sprint_note = f"Tickets were created but could not be added to the sprint: {e}"
-            for r in results:
-                if r["status"] == "created":
-                    r["notes"].append("not in sprint")
+            sprint_error = str(e)
+            for r in in_sprint:
+                r["notes"].append("not in sprint")
 
-    counts = {s: sum(1 for r in results if r["status"] == s) for s in ("created", "skipped", "failed")}
-    return jsonify({"ok": True, "results": results, "counts": counts, "sprint_note": sprint_note})
+    return jsonify({"ok": True, "results": results, "sprint_added": sprint_added, "sprint_error": sprint_error})
 
 
 if __name__ == "__main__":

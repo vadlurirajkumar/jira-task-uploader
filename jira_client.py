@@ -52,6 +52,9 @@ class Jira:
         self.base_url = clean_url(base_url)          # used for links to issues
         self.api_base = api_base or self.base_url    # used for REST calls
         self.auth_type = auth_type
+        self._fields: dict | None = None
+        self._initial_status: dict[str, str] = {}   # issue type id -> status id of a new issue
+        self._paths: dict[tuple, list] = {}         # (from, to, type) -> transitions that worked
         self.session = requests.Session()
         self.session.headers.update({"Accept": "application/json", "Content-Type": "application/json"})
         if auth_type == "bearer":
@@ -142,31 +145,61 @@ class Jira:
         )
 
     def issue_types(self, project_key: str) -> list[dict]:
+        """All issue types of the project, sub-task types included (flagged)."""
         data = self._req("GET", f"project/{project_key}")
         return [
-            {"id": t["id"], "name": t["name"]}
+            {"id": t["id"], "name": t["name"], "subtask": bool(t.get("subtask")),
+             "epic": t.get("hierarchyLevel") == 1 or t["name"].strip().lower() == "epic"}
             for t in data.get("issueTypes", [])
-            if not t.get("subtask", False)
         ]
 
-    def existing_summaries(self, project_key: str) -> set[str]:
-        """Summaries of issues in the project reported by the current user (for de-duplication)."""
+    def statuses(self, project_key: str) -> dict:
+        """Statuses of the project's workflows ordered To Do -> In Progress -> Done,
+        plus the status ids each issue type can use."""
+        data = self._req("GET", f"project/{project_key}/statuses")
+        found: dict[str, dict] = {}
+        by_type: dict[str, list[str]] = {}
+        for it in data:
+            ids = []
+            for s in it.get("statuses", []):
+                cat = (s.get("statusCategory") or {}).get("key") or "indeterminate"
+                found.setdefault(s["id"], {"id": s["id"], "name": s["name"], "category": cat})
+                ids.append(s["id"])
+            by_type[it["id"]] = ids
+        ordered = sorted(found.values(), key=lambda s: STATUS_CATEGORY_ORDER.get(s["category"], 1))
+        return {"statuses": ordered, "by_type": by_type}
+
+    def existing_issues(self, project_key: str) -> dict[str, dict]:
+        """Issues in the project reported by the current user, keyed by normalized summary
+        (for de-duplication and for showing what is already in Jira)."""
         jql = f'project = "{project_key}" AND reporter = currentUser() ORDER BY created DESC'
-        summaries: set[str] = set()
+        fields = "summary,status,issuetype"
+        found: dict[str, dict] = {}
+
+        def add(issues):
+            for issue in issues:
+                f = issue["fields"]
+                st = f.get("status") or {}
+                found.setdefault(normalize(f["summary"]), {
+                    "key": issue["key"], "url": self.issue_url(issue["key"]),
+                    "status": st.get("name"), "status_id": st.get("id"),
+                    "category": (st.get("statusCategory") or {}).get("key"),
+                    "issuetype": (f.get("issuetype") or {}).get("id"),
+                })
+
         # New endpoint (Jira Cloud): /search/jql with nextPageToken paging.
         try:
             token = None
             while True:
-                params = {"jql": jql, "fields": "summary", "maxResults": 100}
+                params = {"jql": jql, "fields": fields, "maxResults": 100}
                 if token:
                     params["nextPageToken"] = token
                 data = self._req("GET", "search/jql", params=params)
-                for issue in data.get("issues", []):
-                    summaries.add(normalize(issue["fields"]["summary"]))
+                add(data.get("issues", []))
                 token = data.get("nextPageToken")
                 if not token or data.get("isLast", True):
                     break
-            return summaries
+            return found
         except JiraError as e:
             if "404" not in str(e) and "410" not in str(e):
                 raise
@@ -174,28 +207,28 @@ class Jira:
         start = 0
         while True:
             data = self._req("GET", "search", params={
-                "jql": jql, "fields": "summary", "maxResults": 100, "startAt": start})
+                "jql": jql, "fields": fields, "maxResults": 100, "startAt": start})
             issues = data.get("issues", [])
-            for issue in issues:
-                summaries.add(normalize(issue["fields"]["summary"]))
+            add(issues)
             start += len(issues)
             if not issues or start >= data.get("total", 0):
                 break
-        return summaries
+        return found
 
-    def create_issue(self, fields: dict) -> dict:
-        """Create an issue. If optional fields (duedate/labels/description) are rejected
-        because they are not on the project's create screen, retry without them."""
+    def create_issue(self, fields: dict, optional: tuple = ()) -> dict:
+        """Create an issue. If optional fields (duedate/labels/description/assignee, plus any
+        passed in `optional`) are rejected because they are not on the project's create
+        screen, retry without them."""
         dropped: list[str] = []
         attempt = dict(fields)
-        for _ in range(3):
+        for _ in range(4):
             try:
                 data = self._req("POST", "issue", json={"fields": attempt})
                 data["dropped_fields"] = dropped
                 return data
             except JiraError as e:
                 msg = str(e)
-                removable = [f for f in ("duedate", "labels", "description", "assignee")
+                removable = [f for f in ("duedate", "labels", "description", "assignee", *optional)
                              if f in attempt and f in msg]
                 if not removable:
                     raise
@@ -203,6 +236,87 @@ class Jira:
                     attempt.pop(f, None)
                     dropped.append(f)
         raise JiraError("Could not create issue after removing optional fields.")
+
+    def epic_fields(self) -> dict:
+        """Ids of the Jira Server/Data Center 'Epic Link' and 'Epic Name' fields, if present."""
+        if self._fields is None:
+            try:
+                data = self._req("GET", "field")
+            except JiraError:
+                data = []
+            self._fields = {}
+            for f in data:
+                custom = (f.get("schema") or {}).get("custom") or ""
+                if custom.endswith(":gh-epic-link"):
+                    self._fields["epic_link"] = f["id"]
+                elif custom.endswith(":gh-epic-label"):
+                    self._fields["epic_name"] = f["id"]
+        return self._fields
+
+    def create_child(self, fields: dict, parent_key: str) -> dict:
+        """Create an issue under a parent: a sub-task, or an issue in an epic. Jira Server /
+        Data Center links issues to epics with the 'Epic Link' field instead of 'parent'."""
+        try:
+            return self.create_issue({**fields, "parent": {"key": parent_key}})
+        except JiraError as e:
+            link = self.epic_fields().get("epic_link")
+            if not link or "parent" not in str(e).lower():
+                raise
+        return self.create_issue({**fields, link: parent_key})
+
+    # ----- workflow status -----
+    def initial_status(self, key: str, type_id: str) -> str:
+        """Status id a newly created issue starts in (fetched once per issue type)."""
+        if type_id not in self._initial_status:
+            data = self._req("GET", f"issue/{key}", params={"fields": "status"})
+            self._initial_status[type_id] = data["fields"]["status"]["id"]
+        return self._initial_status[type_id]
+
+    def _transition(self, key: str, transition_id: str) -> None:
+        self._req("POST", f"issue/{key}/transitions", json={"transition": {"id": str(transition_id)}})
+
+    def move_to_status(self, key: str, current: str, target: str, rank: dict[str, int],
+                       type_id: str = "", max_steps: int = 8) -> str:
+        """Walk the workflow from status `current` to status `target`; returns the final status name.
+        Jira only lists the transitions out of the current status, so when the target is not one
+        step away this takes the step that gets closest to it (statuses ranked To Do -> Done)
+        without revisiting a status. A path that worked is replayed for the next issue."""
+        memo = (current, target, type_id)
+        name = None
+        for tid, to_id, to_name in self._paths.get(memo, []):
+            try:
+                self._transition(key, tid)
+            except JiraError:
+                break
+            current, name = to_id, to_name
+        if current == target:
+            return name
+        start, path, visited = current, [], {current}
+        goal = rank.get(target, 0)
+        for _ in range(max_steps):
+            options = self._req("GET", f"issue/{key}/transitions").get("transitions", [])
+            pick = next((t for t in options if t["to"]["id"] == target), None)
+            if not pick:
+                here = rank.get(current, goal)
+                fresh = [t for t in options if t["to"]["id"] not in visited]
+                if not fresh:
+                    break
+
+                def closeness(t):
+                    r = rank.get(t["to"]["id"], here)
+                    between = min(here, goal) < r < max(here, goal)
+                    return (0 if between else 1, abs(goal - r))
+                pick = min(fresh, key=closeness)
+            self._transition(key, pick["id"])
+            current, name = pick["to"]["id"], pick["to"]["name"]
+            path.append((pick["id"], current, name))
+            if current == target:
+                if start == memo[0]:
+                    self._paths[memo] = path
+                return name
+            visited.add(current)
+        where = f" It is now in '{name}'." if name else ""
+        raise JiraError(f"The workflow has no path to that status from here.{where}")
 
     # ----- assignee -----
     @staticmethod
@@ -272,13 +386,22 @@ KIND_TYPE_NAMES = {
 }
 
 
+STATUS_CATEGORY_ORDER = {"new": 0, "indeterminate": 1, "done": 2}
+
+
 def map_kinds(issue_types: list[dict]) -> dict[str, str | None]:
-    """Map bug/feature/task to the id of the best matching issue type in a project."""
-    by_name = {t["name"].strip().lower(): t["id"] for t in issue_types}
+    """Map bug/feature/task to the id of the best matching (non sub-task) issue type in a project."""
+    by_name = {t["name"].strip().lower(): t["id"] for t in issue_types if not t.get("subtask")}
     return {
         kind: next((by_name[n.lower()] for n in names if n.lower() in by_name), None)
         for kind, names in KIND_TYPE_NAMES.items()
     }
+
+
+def fit_summary(summary: str) -> str:
+    """Summary as Jira stores it: one line, at most 255 characters."""
+    summary = " ".join((summary or "").split())
+    return summary[:252] + "..." if len(summary) > 255 else summary
 
 
 def normalize(summary: str) -> str:

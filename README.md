@@ -1,7 +1,8 @@
 # Jira Task Uploader
 
-Upload a daily-tasks document (`.txt`, `.md`, `.docx` or `.pdf`), review the tasks it
-contains, and create one Jira ticket per task. Sign in once; the tool remembers your
+Upload a daily-tasks document (`.txt`, `.md`, `.docx`, `.pdf`, `.xlsx` or `.csv`), review the
+tasks it contains, and create one Jira ticket per task, grouped under one parent ticket per
+category and moved to the status you choose. Sign in once; the tool remembers your
 Jira account (encrypted on this computer) so the next run needs no password.
 
 ## Run locally
@@ -51,6 +52,32 @@ signed in automatically. Use **Sign out** to forget the current account, or
 
 ## Document format
 
+Two layouts are understood.
+
+### Category report (tables)
+
+A report with one `Date | Task` table per work area, like a PDF or Word export:
+
+```
+Daily Tasks - September 2026          <- title (ignored)
+Summary                               <- summary table, used only to check counts
+| Category | No. of Tasks |
+1. AWS Integration & Dashboard        <- numbered heading = category
+| Date       | Task                          |
+| 01/09/2026 | Hid findings overview and events |
+```
+
+* A numbered heading (`1. Reports`), a Markdown heading (`## Reports`) or a Word heading above a
+  table sets the category for its rows. A table at the top of a page with no heading continues
+  the previous category.
+* Optional columns: `Category`, `Status`, `Type`. Excel sheets with `Category | Date | Task`
+  columns work too; rows repeated on another sheet are ignored.
+* If the document has a summary table (`Category | No. of Tasks`), the review screen confirms
+  every task was found, or names the categories whose counts differ.
+* Rows such as `On Leave` are listed but not selected.
+
+### Daily log (bullets)
+
 The parser understands:
 
 * Date headers such as `Date:- 01/09/2026`, `1 Sep 2026`, `September 1, 2026`, `2026-09-01`
@@ -84,6 +111,40 @@ sidebar shows the mapping for the selected project, and you can change any row's
 
 After parsing you can edit summaries and dates, untick tasks, or add rows before creating tickets.
 
+### Parent tickets and child tasks
+
+When the document has categories, each category becomes a parent and its tasks become children,
+so 54 tasks in 11 categories become 11 parents + 54 child tasks (65 tickets). Choose how in
+**Parent tickets**:
+
+| Option | Parent | Tasks | Sprint |
+|--------|--------|-------|--------|
+| Parent ticket with sub-tasks (default) | Story or Task | Sub-tasks | The parent joins the sprint; sub-tasks follow it |
+| Epic with child issues | Epic | Keep their Bug/Story/Task type, linked to the epic | The tasks join the sprint |
+| No parent | none | One ticket each, category added as a label | The tasks join the sprint |
+
+The **parent name suffix** (filled from the document, e.g. `September 2026`) is added to every
+parent name. Clear it to reuse the same parents every month. Click a parent name to rename it.
+
+### Status
+
+Each row has a status picked from the project's real workflow (for example Dev, QA, Prod,
+Completed). It comes from, in order: your choice in the row, the ticket's current status if it
+is already in Jira, a `Status` column or phrase in the task (`in progress`, `incomplete`,
+`pending`, `completed`, `moved to prod`, `[done]`, `(wip)`), or the **Default status**. A parent's
+status follows its least advanced task unless you set one.
+
+After creating, the tool walks each ticket through the workflow to its status, one transition at
+a time if the workflow has no direct step. Sub-tasks with a simpler workflow get the nearest
+status of the same kind (e.g. `Done` for `Completed`).
+
+### Already in Jira
+
+The **In Jira** column shows which tasks and parents already exist (issues you reported in the
+project with the same summary), with their key and status. Existing tickets are not created
+again; if you change their status in the table, re-uploading moves them in Jira. Re-uploading
+the same file with nothing changed creates nothing.
+
 ## Creating tickets
 
 * Pick the project and issue type (defaults to *Task* when it exists).
@@ -100,14 +161,16 @@ After parsing you can edit summaries and dates, untick tasks, or add rows before
 * Each issue's description contains the full task text and the work date. If the project's
   create screen does not allow labels, due date or description, the tool retries without them.
 
-Results show a link to every created ticket and the reason for anything skipped or failed.
+Results show how many tickets this upload now has in Jira (parents and child tasks counted
+separately, with a count per status), a link to every ticket, **Open all in Jira** (one search
+listing them all), and the reason for anything skipped or failed.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `app.py` | Flask server and REST endpoints |
-| `doc_parser.py` | Text extraction (txt/docx/pdf) and task parsing |
+| `doc_parser.py` | Text and table extraction (txt/md/docx/pdf/xlsx/csv), task, category and status parsing |
 | `jira_client.py` | Jira REST API v2 client (Cloud and Server) |
 | `store.py` | Encrypted saved-account storage on this computer (local mode) |
 | `browser_store.py` | Encrypted saved-account storage in the browser cookie (hosted mode) |
